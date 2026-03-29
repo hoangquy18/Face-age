@@ -11,8 +11,12 @@ from torchvision.utils import save_image
 import torch.distributed as dist
 import math
 import inspect
-from torch._six import container_abcs, string_classes
 import warnings
+
+
+import collections.abc as container_abcs
+
+string_classes = (str,)
 
 
 def group2onehot(groups, age_group):
@@ -28,19 +32,13 @@ def group2feature(group, age_group, feature_size):
 
 
 def get_norm_layer(norm_layer, module, **kwargs):
-    if norm_layer == 'none':
+    if norm_layer == "none":
         return module
-    elif norm_layer == 'bn':
-        return nn.Sequential(
-            module,
-            nn.BatchNorm2d(module.out_channels, **kwargs)
-        )
-    elif norm_layer == 'in':
-        return nn.Sequential(
-            module,
-            nn.InstanceNorm2d(module.out_channels, **kwargs)
-        )
-    elif norm_layer == 'sn':
+    elif norm_layer == "bn":
+        return nn.Sequential(module, nn.BatchNorm2d(module.out_channels, **kwargs))
+    elif norm_layer == "in":
+        return nn.Sequential(module, nn.InstanceNorm2d(module.out_channels, **kwargs))
+    elif norm_layer == "sn":
         return nn.utils.spectral_norm(module, **kwargs)
     else:
         return NotImplementedError
@@ -53,19 +51,24 @@ def get_varname(var):
     :return: string
     """
     for fi in reversed(inspect.stack()):
-        names = [var_name for var_name, var_val in fi.frame.f_locals.items() if var_val is var]
+        names = [
+            var_name
+            for var_name, var_val in fi.frame.f_locals.items()
+            if var_val is var
+        ]
         if len(names) > 0:
             return names[0]
 
 
 def load_network(state_dict):
     if isinstance(state_dict, str):
-        state_dict = torch.load(state_dict, map_location='cpu')
+        state_dict = torch.load(state_dict, map_location="cpu")
     # create new OrderedDict that does not contain `module.`
     from collections import OrderedDict
+
     new_state_dict = OrderedDict()
     for k, v in state_dict.items():
-        namekey = k.replace('module.', '')  # remove `module.`
+        namekey = k.replace("module.", "")  # remove `module.`
         new_state_dict[namekey] = v
     return new_state_dict
 
@@ -74,8 +77,8 @@ class LoggerX(object):
 
     def __init__(self, save_root):
         assert dist.is_initialized()
-        self.models_save_dir = osp.join(save_root, 'save_models')
-        self.images_save_dir = osp.join(save_root, 'save_images')
+        self.models_save_dir = osp.join(save_root, "save_models")
+        self.images_save_dir = osp.join(save_root, "save_images")
         os.makedirs(self.models_save_dir, exist_ok=True)
         os.makedirs(self.images_save_dir, exist_ok=True)
         self._modules = []
@@ -103,16 +106,25 @@ class LoggerX(object):
         for i in range(len(self.modules)):
             module_name = self.module_names[i]
             module = self.modules[i]
-            torch.save(module.state_dict(), osp.join(self.models_save_dir, '{}-{}'.format(module_name, epoch)))
+            torch.save(
+                module.state_dict(),
+                osp.join(self.models_save_dir, "{}-{}".format(module_name, epoch)),
+            )
 
     def load_checkpoints(self, epoch):
         for i in range(len(self.modules)):
             module_name = self.module_names[i]
             module = self.modules[i]
-            module.load_state_dict(load_network(osp.join(self.models_save_dir, '{}-{}'.format(module_name, epoch))))
+            module.load_state_dict(
+                load_network(
+                    osp.join(self.models_save_dir, "{}-{}".format(module_name, epoch))
+                )
+            )
 
     def msg(self, stats, step):
-        output_str = '[{}] {:05d}, '.format(time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()), step)
+        output_str = "[{}] {:05d}, ".format(
+            time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()), step
+        )
 
         for i in range(len(stats)):
             if isinstance(stats, (list, tuple)):
@@ -126,15 +138,20 @@ class LoggerX(object):
                 var = var.detach().mean()
                 var = reduce_tensor(var)
                 var = var.item()
-            output_str += '{} {:2.5f}, '.format(var_name, var)
+            output_str += "{} {:2.5f}, ".format(var_name, var)
 
         if self.local_rank == 0:
             print(output_str)
 
     def save_image(self, grid_img, n_iter, sample_type):
-        save_image(grid_img, osp.join(self.images_save_dir,
-                                      '{}_{}_{}.jpg'.format(n_iter, self.local_rank, sample_type)),
-                   nrow=1)
+        save_image(
+            grid_img,
+            osp.join(
+                self.images_save_dir,
+                "{}_{}_{}.jpg".format(n_iter, self.local_rank, sample_type),
+            ),
+            nrow=1,
+        )
 
 
 def reduce_loss(*loss):
@@ -156,9 +173,16 @@ def convert_to_ddp(*modules):
     modules = [x.cuda() for x in modules]
     if dist.is_initialized():
         rank = dist.get_rank()
-        modules = [torch.nn.parallel.DistributedDataParallel(x,
-                                                             device_ids=[rank, ],
-                                                             output_device=rank) for x in modules]
+        modules = [
+            torch.nn.parallel.DistributedDataParallel(
+                x,
+                device_ids=[
+                    rank,
+                ],
+                output_device=rank,
+            )
+            for x in modules
+        ]
 
     return modules
 
@@ -169,8 +193,8 @@ def get_dex_age(pred):
     return value
 
 
-def apply_weight_decay(*modules, weight_decay_factor=0., wo_bn=True):
-    '''
+def apply_weight_decay(*modules, weight_decay_factor=0.0, wo_bn=True):
+    """
     https://discuss.pytorch.org/t/weight-decay-in-the-optimizers-is-a-bad-idea-especially-with-batchnorm/16994/5
     Apply weight decay to pytorch model without BN;
     In pytorch:
@@ -180,15 +204,15 @@ def apply_weight_decay(*modules, weight_decay_factor=0., wo_bn=True):
     :param modules:
     :param weight_decay_factor:
     :return:
-    '''
+    """
     for module in modules:
         # https://pytorch.org/docs/stable/nn.html#torch.nn.Module.modules
         for m in module.modules():
-            if hasattr(m, 'weight'):
+            if hasattr(m, "weight"):
                 if wo_bn and isinstance(m, torch.nn.modules.batchnorm._BatchNorm):
                     continue
-                if not hasattr(m.weight, 'grad'):
-                    warnings.warn('{} has no grad.'.format(m))
+                if not hasattr(m.weight, "grad"):
+                    warnings.warn("{} has no grad.".format(m))
                     continue
                 m.weight.grad.add_(m.weight, alpha=weight_decay_factor)
 
@@ -200,9 +224,11 @@ def convert_to_cuda(data):
         return data.cuda(non_blocking=True)
     elif isinstance(data, container_abcs.Mapping):
         return {key: convert_to_cuda(data[key]) for key in data}
-    elif isinstance(data, tuple) and hasattr(data, '_fields'):  # namedtuple
+    elif isinstance(data, tuple) and hasattr(data, "_fields"):  # namedtuple
         return elem_type(*(convert_to_cuda(d) for d in data))
-    elif isinstance(data, container_abcs.Sequence) and not isinstance(data, string_classes):
+    elif isinstance(data, container_abcs.Sequence) and not isinstance(
+        data, string_classes
+    ):
         return [convert_to_cuda(d) for d in data]
     else:
         return data
