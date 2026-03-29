@@ -22,8 +22,13 @@ class FAS(BasicTask):
                 transforms.ToTensor(),
                 transforms.Normalize(mean=[0.5, ], std=[0.5, ])
             ])
-        train_dataset = AgingDataset(opt.dataset_name, age_group=opt.age_group,
-                                     total_pairs=opt.num_iter * opt.batch_size, transforms=train_transform)
+        train_dataset = AgingDataset(
+            opt.dataset_name,
+            age_group=opt.age_group,
+            total_pairs=opt.num_iter * opt.batch_size,
+            transforms=train_transform,
+            data_root=opt.dataset_root,
+        )
 
         weights = None
         sampler = RandomSampler(train_dataset, batch_size=opt.batch_size,

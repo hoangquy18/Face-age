@@ -88,6 +88,12 @@ class MTLFace(object):
         # TRAINING
         parser.add_argument("--dataset_name", "-d", help="input image size", type=str)
         parser.add_argument(
+            "--dataset_root",
+            type=str,
+            default=None,
+            help="Directory containing {dataset_name}.txt and image paths (default: MTLFace/dataset).",
+        )
+        parser.add_argument(
             "--image_size", help="input image size", default=224, type=int
         )
         parser.add_argument("--num_iter", help="total epochs", type=int, default=125)
