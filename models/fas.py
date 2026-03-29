@@ -28,6 +28,7 @@ class FAS(BasicTask):
             total_pairs=opt.num_iter * opt.batch_size,
             transforms=train_transform,
             data_root=opt.dataset_root,
+            list_path=opt.dataset_list,
         )
 
         weights = None

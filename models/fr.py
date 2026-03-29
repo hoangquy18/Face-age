@@ -41,7 +41,10 @@ class FR(BasicTask):
             ]
         )
         train_dataset = TrainImageDataset(
-            opt.dataset_name, train_transform, data_root=opt.dataset_root
+            opt.dataset_name,
+            train_transform,
+            data_root=opt.dataset_root,
+            list_path=opt.dataset_list,
         )
 
         weights = None

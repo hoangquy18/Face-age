@@ -91,7 +91,15 @@ class MTLFace(object):
             "--dataset_root",
             type=str,
             default=None,
-            help="Directory containing {dataset_name}.txt and image paths (default: MTLFace/dataset).",
+            help="Root directory for image files (paths in the list .txt are relative to this). "
+            "Default: same folder as the list file (MTLFace/dataset when using defaults).",
+        )
+        parser.add_argument(
+            "--dataset_list",
+            type=str,
+            default=None,
+            help="Path to the training list .txt (e.g. from repo/GitHub). "
+            "If omitted, uses {dataset_root or MTLFace/dataset}/{dataset_name}.txt.",
         )
         parser.add_argument(
             "--image_size", help="input image size", default=224, type=int

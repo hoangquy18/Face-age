@@ -9,13 +9,23 @@ from common.ops import age2group
 
 
 class BaseImageDataset(tordata.Dataset):
-    def __init__(self, dataset_name, transforms=None, data_root=None):
+    def __init__(self, dataset_name, transforms=None, data_root=None, list_path=None):
         self.transforms = transforms
+        default_pack_root = osp.join(osp.dirname(osp.dirname(__file__)), "dataset")
+
+        if list_path is not None:
+            list_file = osp.abspath(list_path)
+        else:
+            list_base = osp.abspath(data_root) if data_root is not None else default_pack_root
+            list_file = osp.join(list_base, "{}.txt".format(dataset_name))
+
         if data_root is not None:
             self.root = osp.abspath(data_root)
         else:
-            self.root = osp.join(osp.dirname(osp.dirname(__file__)), 'dataset')
-        df = pd.read_csv(osp.join(self.root, '{}.txt'.format(dataset_name)), header=None, index_col=False, sep=' ')
+            # Ảnh cùng thư mục với file .txt (repo / layout cũ)
+            self.root = osp.dirname(list_file)
+
+        df = pd.read_csv(list_file, header=None, index_col=False, sep=" ")
         self.data = df.values
         self.image_list = np.array([osp.join(self.root, x) for x in self.data[:, 1]])
 
@@ -24,9 +34,12 @@ class BaseImageDataset(tordata.Dataset):
 
 
 class EvaluationImageDataset(BaseImageDataset):
-    def __init__(self, dataset_name, transforms=None, data_root=None):
+    def __init__(self, dataset_name, transforms=None, data_root=None, list_path=None):
         super(EvaluationImageDataset, self).__init__(
-            dataset_name, transforms=transforms, data_root=data_root
+            dataset_name,
+            transforms=transforms,
+            data_root=data_root,
+            list_path=list_path,
         )
 
     def __getitem__(self, index):
@@ -37,9 +50,12 @@ class EvaluationImageDataset(BaseImageDataset):
 
 
 class TrainImageDataset(BaseImageDataset):
-    def __init__(self, dataset_name, transforms=None, data_root=None):
+    def __init__(self, dataset_name, transforms=None, data_root=None, list_path=None):
         super(TrainImageDataset, self).__init__(
-            dataset_name, transforms=transforms, data_root=data_root
+            dataset_name,
+            transforms=transforms,
+            data_root=data_root,
+            list_path=list_path,
         )
         self.ids = self.data[:, 0].astype(int)
         self.classes = np.unique(self.ids)
@@ -57,9 +73,20 @@ class TrainImageDataset(BaseImageDataset):
 
 
 class AgingDataset(BaseImageDataset):
-    def __init__(self, dataset_name, age_group, total_pairs, transforms=None, data_root=None):
+    def __init__(
+        self,
+        dataset_name,
+        age_group,
+        total_pairs,
+        transforms=None,
+        data_root=None,
+        list_path=None,
+    ):
         super(AgingDataset, self).__init__(
-            dataset_name, transforms=transforms, data_root=data_root
+            dataset_name,
+            transforms=transforms,
+            data_root=data_root,
+            list_path=list_path,
         )
         self.ids = self.data[:, 0].astype(int)
         self.classes = np.unique(self.ids)
