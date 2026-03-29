@@ -1,7 +1,7 @@
 import torch
 from torchvision import transforms
 import torch.nn.functional as F
-import torch.cuda.amp as amp
+from torch import amp
 
 from common.sampler import RandomSampler
 from common.data_prefetcher import DataPrefetcher
@@ -79,7 +79,7 @@ class FAS(BasicTask):
         self.d_optim.zero_grad()
 
         with torch.no_grad():
-            with amp.autocast(enabled=opt.amp):
+            with amp.autocast("cuda", enabled=opt.amp):
                 x_1, x_2, x_3, x_4, x_5, x_id, x_age = backbone(source_img, return_shortcuts=True)
             x_1, x_2, x_3, x_4, x_5, x_id, x_age = \
                 x_1.float(), x_2.float(), x_3.float(), x_4.float(), x_5.float(), x_id.float(), x_age.float()
@@ -92,7 +92,7 @@ class FAS(BasicTask):
         d_loss.backward()
         self.d_optim.step()
 
-        with amp.autocast(enabled=opt.amp):
+        with amp.autocast("cuda", enabled=opt.amp):
             _, g_x_id, g_x_age = backbone(g_source, return_age=True)
         g_x_id, g_x_age = g_x_id.float(), g_x_age.float()
 

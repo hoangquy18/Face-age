@@ -2,7 +2,7 @@ import torch
 from torchvision import transforms
 import numpy as np
 import torch.nn.functional as F
-import torch.cuda.amp as amp
+from torch import amp
 
 from common.sampler import RandomSampler
 from common.data_prefetcher import DataPrefetcher
@@ -96,7 +96,7 @@ class FR(BasicTask):
         backbone, head, estimation_network, da_discriminator = convert_to_ddp(
             backbone, head, estimation_network, da_discriminator
         )
-        scaler = amp.GradScaler()
+        scaler = amp.GradScaler("cuda")
         self.optimizer = optimizer
         self.backbone = backbone
         self.head = head
@@ -154,7 +154,7 @@ class FR(BasicTask):
         self.estimation_network.train()
 
         if opt.amp:
-            with amp.autocast():
+            with amp.autocast("cuda"):
                 embedding, x_id, x_age = self.backbone(images, return_age=True)
             embedding = embedding.float()
             x_id = x_id.float()

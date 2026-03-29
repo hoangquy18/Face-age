@@ -38,7 +38,8 @@ class AttentionModule(nn.Module):
         self.spatial = nn.Sequential(
             nn.Conv2d(2, 1, kernel_size=kernel_size, stride=1, padding=(kernel_size - 1) // 2,
                       dilation=1, groups=1, bias=False),
-            nn.BatchNorm2d(1, eps=1e-5, momentum=0.01, affine=True),
+            # GroupNorm: BatchNorm2d fails when N*H*W==1 (e.g. batch_size=1 and 1x1 maps)
+            nn.GroupNorm(1, 1),
             nn.Sigmoid()
         )
 
@@ -49,7 +50,7 @@ class AttentionModule(nn.Module):
             nn.ReLU(inplace=True),
             nn.Conv2d(
                 _channels // reduction, channels, kernel_size=1, padding=0, bias=False),
-            nn.BatchNorm2d(channels, eps=1e-5, momentum=0.01, affine=True),
+            nn.GroupNorm(32, channels),
             nn.Sigmoid()
         )
 
