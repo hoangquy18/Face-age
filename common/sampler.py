@@ -5,9 +5,19 @@ from torch.utils.data.sampler import Sampler
 
 class RandomSampler(Sampler):
 
-    def __init__(self, dataset, batch_size=0, num_iter=None, restore_iter=0,
-                 weights=None, replacement=True, seed=0):
-        super(RandomSampler, self).__init__(dataset)
+    def __init__(
+        self,
+        dataset,
+        batch_size=0,
+        num_iter=None,
+        restore_iter=0,
+        weights=None,
+        replacement=True,
+        seed=0,
+    ):
+        # PyTorch 2.2+ Sampler no longer uses data_source in the base __init__;
+        # passing dataset can raise TypeError (object.__init__ gets extra args).
+        super().__init__()
         self.dist = dist.is_initialized()
         if self.dist:
             self.num_replicas = dist.get_world_size()
@@ -37,13 +47,17 @@ class RandomSampler(Sampler):
                 g.manual_seed(self.seed + e)
                 # drop last
                 indices.extend(torch.randperm(n, generator=g).tolist()[:n])
-            indices = indices[:self.num_samples]
+            indices = indices[: self.num_samples]
             # indices = torch.randint(high=n, size=(self.num_samples,), dtype=torch.int64, generator=g).tolist()
         else:
-            indices = torch.multinomial(self.weights, self.num_samples, self.replacement, generator=g).tolist()
+            indices = torch.multinomial(
+                self.weights, self.num_samples, self.replacement, generator=g
+            ).tolist()
 
         # subsample
-        indices = indices[self.restore + self.rank:self.num_samples:self.num_replicas]
+        indices = indices[
+            self.restore + self.rank : self.num_samples : self.num_replicas
+        ]
 
         return iter(indices)
 
