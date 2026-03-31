@@ -113,6 +113,18 @@ class MTLFace(object):
             type=int,
             default=1000,
         )
+        parser.add_argument(
+            "--save_interval",
+            help="save checkpoint every N iterations (0 = only at end)",
+            type=int,
+            default=0,
+        )
+        parser.add_argument(
+            "--save_root",
+            help="root directory for saving checkpoints (default: ../output)",
+            type=str,
+            default=None,
+        )
 
         parser.add_argument(
             "--seed", type=int, default=1, metavar="S", help="random seed (default: 1)"
@@ -143,6 +155,12 @@ class MTLFace(object):
 
         return parser
 
+    def _save_checkpoints(self, n_iter):
+        if self.opt.train_fr:
+            self.fr.logger.checkpoints(n_iter)
+        if self.opt.train_fas:
+            self.fas.logger.checkpoints(n_iter)
+
     def fit(self):
         opt = self.opt
         # training routine
@@ -172,3 +190,8 @@ class MTLFace(object):
                     self.fr.validate(n_iter)
                 if opt.train_fas:
                     self.fas.validate(n_iter)
+            if opt.save_interval > 0 and n_iter % opt.save_interval == 0:
+                self._save_checkpoints(n_iter)
+
+        # Always save final checkpoint at end of training
+        self._save_checkpoints(opt.num_iter)

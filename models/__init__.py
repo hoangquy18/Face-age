@@ -4,7 +4,8 @@ from common.ops import LoggerX
 class BasicTask(object):
     def __init__(self, opt):
         self.opt = opt
-        self.logger = LoggerX(save_root='../output')
+        save_root = getattr(opt, 'save_root', None) or '../output'
+        self.logger = LoggerX(save_root=save_root)
 
     def set_loader(self):
         pass
