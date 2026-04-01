@@ -3,11 +3,15 @@
 Evaluate a trained MTLFace backbone on InsightFace-style test sets produced by
 `dataset/convert_insightface.py --bin` (e.g. README: dest folder `arcface-test-set`).
 
+The `*.txt` files here **are** verification pair lists (not training lists): each line is
+two face image filenames plus a label — same protocol as InsightFace's `.bin` benchmarks.
+This is different from `casia-webface.txt` style (one image per line: id path age gender).
+
 Layout expected (one .bin -> one benchmark):
   arcface-test-set/
-    agedb_30/
+    agedb_30.txt     # pair list: "00001.jpg 00002.jpg 1"  (1=same, -1=different)
+    agedb_30/        # required: decoded JPGs referenced by the pair list
       00001.jpg ...
-    agedb_30.txt     # lines: "00001.jpg 00002.jpg 1"  (1=same, -1=different)
     lfw.txt
     lfw/
     ...
@@ -276,7 +280,12 @@ def main() -> None:
         name = os.path.splitext(os.path.basename(pair_path))[0]
         image_dir = os.path.join(test_root, name)
         if not os.path.isdir(image_dir):
-            print(f"[skip] {name}: missing image dir {image_dir}")
+            print(
+                f"[skip] {name}: missing image dir {image_dir}\n"
+                f"       Pair list {pair_path} is valid, but JPGs must live under that folder.\n"
+                f"       Generate both with: python dataset/convert_insightface.py --bin "
+                f"--source <benchmark>.bin --dest <this test_root>"
+            )
             continue
         print(f"=== {name} ===")
         r = run_benchmark(net, pair_path, image_dir, tfm, device, args.batch_size)
