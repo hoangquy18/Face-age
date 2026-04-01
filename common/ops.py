@@ -20,7 +20,8 @@ string_classes = (str,)
 
 
 def group2onehot(groups, age_group):
-    code = torch.eye(age_group)[groups.squeeze()]
+    idx = groups.squeeze().long()
+    code = torch.eye(age_group, device=idx.device, dtype=torch.float32)[idx]
     if len(code.size()) > 1:
         return code
     return code.unsqueeze(0)
