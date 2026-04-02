@@ -4,6 +4,7 @@ import tqdm
 from .fr import FR
 from .fas import FAS
 from common.ops import load_network
+from backbone.aifr import FAS_COMPATIBLE_BACKBONE_NAMES
 
 """
 python -m torch.distributed.launch --nproc_per_node=8 --master_port=17647 main.py \
@@ -23,6 +24,12 @@ class MTLFace(object):
 
     def __init__(self, opt):
         self.opt = opt
+        if opt.train_fas and opt.backbone_name not in FAS_COMPATIBLE_BACKBONE_NAMES:
+            raise ValueError(
+                f"--train_fas requires an IResNet backbone; got {opt.backbone_name!r}. "
+                f"Use one of {sorted(FAS_COMPATIBLE_BACKBONE_NAMES)}. "
+                "mobilenet_v2 and vit_b_32 are FR-only (no return_shortcuts)."
+            )
         self.fr = FR(opt)
         self.fr.set_loader()
         self.fr.set_model()

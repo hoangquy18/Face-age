@@ -223,6 +223,9 @@ def run_benchmark(
 
 
 def main() -> None:
+    add_repo_to_path()
+    from backbone.aifr import BACKBONE_CHOICES
+
     parser = argparse.ArgumentParser(
         description="Evaluate MTLFace backbone on arcface-test-set (InsightFace .bin converted)"
     )
@@ -239,7 +242,8 @@ def main() -> None:
         "--backbone_name",
         type=str,
         default="ir50",
-        choices=["ir34", "ir50", "ir64", "ir101", "irse101"],
+        choices=list(BACKBONE_CHOICES),
+        help="Must match the architecture used to train --checkpoint",
     )
     parser.add_argument("--image_size", type=int, default=112)
     parser.add_argument("--batch_size", type=int, default=64)

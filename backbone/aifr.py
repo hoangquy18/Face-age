@@ -4,80 +4,8 @@ import tqdm
 from torch import nn
 
 ###########
+from .fsm import AttentionModule
 from .irse import IResNet
-
-
-class SPPModule(nn.Module):
-    def __init__(self, pool_mode="avg", sizes=(1, 2, 3, 6)):
-        super().__init__()
-        if pool_mode == "avg":
-            pool_layer = nn.AdaptiveAvgPool2d
-        elif pool_mode == "max":
-            pool_layer = nn.AdaptiveMaxPool2d
-        else:
-            raise NotImplementedError
-
-        self.pool_blocks = nn.ModuleList(
-            [nn.Sequential(pool_layer(size), nn.Flatten()) for size in sizes]
-        )
-
-    def forward(self, x):
-        xs = [block(x) for block in self.pool_blocks]
-        x = torch.cat(xs, dim=1)
-        x = x.view(x.size(0), x.size(1), 1, 1)
-        return x
-
-
-class AttentionModule(nn.Module):
-    def __init__(self, channels=512, reduction=16):
-        super(AttentionModule, self).__init__()
-        kernel_size = 7
-        pool_size = (1, 2, 3)
-        self.avg_spp = SPPModule("avg", pool_size)
-        self.max_spp = SPPModule("max", pool_size)
-        self.spatial = nn.Sequential(
-            nn.Conv2d(
-                2,
-                1,
-                kernel_size=kernel_size,
-                stride=1,
-                padding=(kernel_size - 1) // 2,
-                dilation=1,
-                groups=1,
-                bias=False,
-            ),
-            # GroupNorm: BatchNorm2d fails when N*H*W==1 (e.g. batch_size=1 and 1x1 maps)
-            nn.GroupNorm(1, 1),
-            nn.Sigmoid(),
-        )
-
-        _channels = channels * int(sum([x**2 for x in pool_size]))
-        self.channel = nn.Sequential(
-            nn.Conv2d(
-                _channels, _channels // reduction, kernel_size=1, padding=0, bias=False
-            ),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(
-                _channels // reduction, channels, kernel_size=1, padding=0, bias=False
-            ),
-            nn.GroupNorm(32, channels),
-            nn.Sigmoid(),
-        )
-
-    def forward(self, x):
-        channel_input = self.avg_spp(x) + self.max_spp(x)
-        channel_scale = self.channel(channel_input)
-
-        spatial_input = torch.cat(
-            (torch.max(x, 1)[0].unsqueeze(1), torch.mean(x, 1).unsqueeze(1)), dim=1
-        )
-        spatial_scale = self.spatial(spatial_input)
-
-        x_age = (x * channel_scale + x * spatial_scale) * 0.5
-
-        x_id = x - x_age
-
-        return x_id, x_age
 
 
 class AIResNet(IResNet):
@@ -130,10 +58,21 @@ class AgeEstimationModule(nn.Module):
 
 from functools import partial
 
+from .transfer_backbones import MobileNetFsmBackbone, ViTFsmBackbone
+
+# IResNet only: FAS / AgingModule needs return_shortcuts from the backbone.
+FAS_COMPATIBLE_BACKBONE_NAMES = frozenset(
+    {"ir34", "ir50", "ir64", "ir101", "irse101"}
+)
+
 backbone_dict = {
     "ir34": partial(AIResNet, num_layers=[3, 4, 6, 3], mode="ir"),
     "ir50": partial(AIResNet, num_layers=[3, 4, 14, 3], mode="ir"),
     "ir64": partial(AIResNet, num_layers=[3, 4, 10, 3], mode="ir"),
     "ir101": partial(AIResNet, num_layers=[3, 13, 30, 3], mode="ir"),
     "irse101": partial(AIResNet, num_layers=[3, 13, 30, 3], mode="ir_se"),
+    "mobilenet_v2": partial(MobileNetFsmBackbone, pretrained=True),
+    "vit_b_32": partial(ViTFsmBackbone, pretrained=True),
 }
+
+BACKBONE_CHOICES = tuple(backbone_dict.keys())
