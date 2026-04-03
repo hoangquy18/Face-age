@@ -113,7 +113,7 @@ class AgingModule(nn.Module):
         self.conv3 = nn.Conv2d(32, 3, 1, 1, 0)
         self.__init_weights()
 
-    def forward(self, input_img, x_1, x_2, x_3, x_4, x_5, x_id, x_age, condition):
+    def forward(self, input_img, x_1, x_2, x_3, x_4, x_5, x_id, x_age, condition, residual_scale=1.0):
         x_id = self.conv1(x_id)
         x_id = self.router(x_id, condition)
         inputs = {0: x_id, 1: condition}
@@ -124,7 +124,7 @@ class AgingModule(nn.Module):
         x = self.up_3(x, x_2)
         x = self.up_4(x, input_img)
         x = self.conv3(x)
-        return input_img + x
+        return input_img + residual_scale * x
 
     def __init_weights(self):
         for m in self.modules():

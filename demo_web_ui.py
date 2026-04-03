@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """
-Gradio Web UI: face verification (2 images), top-K gallery search, age + age group.
+Gradio Web UI: verification, top-K gallery, age, and FAS (face age synthesis).
 
   conda activate moe
   cd /path/to/MTLFace
   pip install gradio
   python demo_web_ui.py
 
-Defaults use weights_1/backbone-20000 and weights_1/estimation_network-20000 if present.
+FR weights (default): weights_1/backbone-* and estimation_network-*.
+FAS weights (default): two_task_weights/backbone-* and generator-* (joint training).
 """
 
 from __future__ import annotations
@@ -20,7 +21,8 @@ import sys
 import numpy as np
 import torch
 
-from mtlface_face_engine import FaceEngine, repo_root
+from mtlface_face_engine import FaceEngine, group_labels, repo_root
+from mtlface_fas_engine import FASEngine, discover_fas_iteration
 
 _web_root = repo_root()
 if _web_root not in sys.path:
@@ -128,6 +130,17 @@ def build_gallery_matrix(
     return valid_paths, mat
 
 
+def _backbone_cache_tag(backbone_ckpt: str) -> str:
+    """Stable tag for cache key: basename + file size (not mtime — mtime changes on copy/touch)."""
+    if not backbone_ckpt or not os.path.isfile(backbone_ckpt):
+        return "none"
+    try:
+        sz = os.path.getsize(backbone_ckpt)
+    except OSError:
+        return "none"
+    return f"{os.path.basename(backbone_ckpt)}:{sz}"
+
+
 def cache_path(
     root: str,
     list_path: str,
@@ -135,13 +148,10 @@ def cache_path(
     backbone_ckpt: str,
     gallery_mode: str,
 ) -> str:
-    mtime = (
-        os.path.getmtime(backbone_ckpt)
-        if backbone_ckpt and os.path.isfile(backbone_ckpt)
-        else 0
-    )
+    list_key = os.path.abspath(list_path)
+    tag = _backbone_cache_tag(backbone_ckpt)
     h = hashlib.md5(
-        f"{list_path}|{max_images}|{backbone_ckpt}|{mtime}|{gallery_mode}".encode(),
+        f"{list_key}|{max_images}|{tag}|{gallery_mode}".encode(),
         usedforsecurity=False,
     ).hexdigest()[:12]
     d = os.path.join(root, ".cache")
@@ -158,7 +168,10 @@ def load_or_build_gallery(
     use_cache: bool,
     gallery_fast: bool,
     progress=None,
-) -> tuple[list[str], np.ndarray]:
+) -> tuple[list[str], np.ndarray, bool, str]:
+    """
+    Returns (paths, embedding_matrix, loaded_from_cache, cache_file_path).
+    """
     root = repo_root()
     gallery_mode = "sequential" if gallery_fast else "reservoir"
     cache_file = cache_path(
@@ -168,7 +181,7 @@ def load_or_build_gallery(
         z = np.load(cache_file, allow_pickle=True)
         paths = z["paths"].tolist()
         mat = z["emb"].astype(np.float32)
-        return paths, mat
+        return paths, mat, True, cache_file
 
     if gallery_fast:
         paths = collect_gallery_paths_sequential(list_path, data_root, max_images)
@@ -177,7 +190,7 @@ def load_or_build_gallery(
     paths, mat = build_gallery_matrix(engine, paths, progress=progress)
     if use_cache and mat.shape[0] > 0:
         np.savez_compressed(cache_file, emb=mat, paths=np.array(paths, dtype=object))
-    return paths, mat
+    return paths, mat, False, cache_file
 
 
 def format_age(pred) -> str:
@@ -194,6 +207,8 @@ def make_app(
     gallery_paths: list[str],
     gallery_mat: np.ndarray,
     threshold: float,
+    fas_engine: FASEngine | None,
+    fas_group_labels: list[str],
 ):
     import gradio as gr
 
@@ -240,11 +255,59 @@ def make_app(
         gallery_data = list(zip(items, captions))
         return gallery_data, info
 
+    fas_radio_choices = [f"{i}: {lbl}" for i, lbl in enumerate(fas_group_labels)]
+
+    def tab_fas_single(src, group_choice: str, res_scale: float, train_bn: bool):
+        if fas_engine is None or not fas_engine.ready:
+            return None, (
+                "**FAS chưa load.** Đặt checkpoint `backbone-<iter>` và `generator-<iter>` "
+                "vào thư mục `two_task_weights/` (hoặc chỉnh `--fas_weights_dir`, `--fas_iter`)."
+            )
+        if src is None:
+            return None, "Upload một ảnh mặt."
+        gid = int(str(group_choice).split(":", 1)[0].strip())
+        out = fas_engine.synthesize(
+            src,
+            gid,
+            residual_scale=float(res_scale),
+            generator_train_mode=bool(train_bn),
+        )
+        ref_gid = 0 if gid != 0 else fas_engine.age_group - 1
+        try:
+            pix_diff = fas_engine.mean_abs_pixel_diff_between_groups(
+                src,
+                gid,
+                ref_gid,
+                residual_scale=float(res_scale),
+                generator_train_mode=bool(train_bn),
+            )
+        except Exception:
+            pix_diff = float("nan")
+        md = ""
+        return out, md
+
+    def tab_fas_all(src, res_scale: float, train_bn: bool):
+        if fas_engine is None or not fas_engine.ready:
+            return None, (
+                "**FAS chưa load.** Cần `two_task_weights/` với backbone + generator cùng iteration."
+            )
+        if src is None:
+            return None, "Upload một ảnh mặt."
+        imgs = fas_engine.synthesize_all_groups(
+            src,
+            residual_scale=float(res_scale),
+            generator_train_mode=bool(train_bn),
+        )
+        caps = [f"{i}: {fas_group_labels[i]}" for i in range(len(imgs))]
+        return list(zip(imgs, caps)), (
+            f"All groups với residual_scale={res_scale:.2f}, train_bn={train_bn}."
+        )
+
     with gr.Blocks(title="MTLFace Demo") as demo:
         gr.Markdown(
-            "## MTLFace — Verification, Top-K search, Age\n"
+            "## MTLFace — Verification, Top-K, Age, **FAS synthesis**\n"
             "Upload aligned **112×112** face crops (or similar). "
-            "Similarity is **cosine** between L2-normalized embeddings."
+            "Verification dùng **cosine** trên embedding. Tab FAS cần weight joint **backbone + generator**."
         )
         with gr.Tab("Verify (2 images)"):
             with gr.Row():
@@ -270,6 +333,54 @@ def make_app(
             info = gr.Textbox(label="Query age + details", lines=12)
             btn2 = gr.Button("Search")
             btn2.click(tab_topk, inputs=[qimg, k_slider], outputs=[g_out, info])
+
+        with gr.Tab("Face age synthesis (FAS)"):
+            if fas_engine is not None and fas_engine.ready:
+                gr.Markdown("")
+            else:
+                gr.Markdown(
+                    "⚠️ **FAS tắt hoặc thiếu weight.** Thêm `two_task_weights/backbone-<N>` và "
+                    "`two_task_weights/generator-<N>` (cùng `N`), hoặc chạy với "
+                    "`--fas_weights_dir` / `--fas_iter`."
+                )
+            src_fas = gr.Image(type="pil", label="Ảnh nguồn (mặt)")
+            fas_res = gr.Slider(
+                0.25,
+                4.0,
+                value=2.0,
+                step=0.25,
+                label="residual_scale (nhân phần thay đổi; 1.0 = đúng paper)",
+            )
+            fas_train_bn = gr.Checkbox(
+                value=False,
+                label="Generator.train() khi infer (BN theo batch 1 ảnh — thử nghiệm, có thể artifact)",
+            )
+            grp = gr.Radio(
+                choices=fas_radio_choices,
+                value=fas_radio_choices[min(3, len(fas_radio_choices) - 1)],
+                label="Nhóm tuổi đích",
+            )
+            out_img = gr.Image(type="pil", label="Ảnh sau synthesis")
+            out_md_fas = gr.Markdown()
+            b_fas = gr.Button("Sinh ảnh (1 nhóm)")
+            b_fas.click(
+                tab_fas_single,
+                inputs=[src_fas, grp, fas_res, fas_train_bn],
+                outputs=[out_img, out_md_fas],
+            )
+
+            gr.Markdown("---")
+            _nc = min(7, max(1, len(fas_group_labels)))
+            gal_all = gr.Gallery(
+                label="Tất cả nhóm tuổi (0→K−1)", columns=_nc, height="auto"
+            )
+            info_all = gr.Textbox(label="Ghi chú", lines=2)
+            b_all = gr.Button("Sinh cả 7 nhóm tuổi")
+            b_all.click(
+                tab_fas_all,
+                inputs=[src_fas, fas_res, fas_train_bn],
+                outputs=[gal_all, info_all],
+            )
 
     return demo
 
@@ -310,9 +421,29 @@ def main():
     parser.add_argument(
         "--no_cache", action="store_true", help="Disable gallery embedding cache"
     )
+    parser.add_argument(
+        "--fas_weights_dir",
+        type=str,
+        default="two_task_weights",
+        help="Thư mục chứa backbone-* và generator-* (joint FR+FAS). Đường dẫn tương đối = trong repo.",
+    )
+    parser.add_argument(
+        "--fas_iter",
+        type=int,
+        default=None,
+        help="Iteration checkpoint FAS; mặc định: tự tìm N lớn nhất có cả backbone-N và generator-N.",
+    )
+    parser.add_argument(
+        "--no_fas",
+        action="store_true",
+        help="Không load FAS (ẩn chức năng synthesis; tab vẫn hiện hướng dẫn).",
+    )
     args = parser.parse_args()
 
-    ckpt_dir = args.ckpt_dir or default_ckpt_dir(root)
+    _ckpt = args.ckpt_dir
+    if _ckpt and not os.path.isabs(_ckpt):
+        _ckpt = os.path.join(root, _ckpt)
+    ckpt_dir = _ckpt or default_ckpt_dir(root)
     backbone_ckpt = resolve_ckpt(ckpt_dir, "backbone", args.iter)
     age_ckpt = resolve_ckpt(ckpt_dir, "estimation_network", args.iter)
 
@@ -341,18 +472,34 @@ def main():
         device=device,
     )
 
-    list_path = args.list_path or os.path.join(root, "dataset", "casia-webface.txt")
+    list_path = os.path.abspath(
+        args.list_path or os.path.join(root, "dataset", "casia-webface.txt")
+    )
     data_root = args.data_root or root
 
     print(f"Device: {device}")
     print(f"Backbone: {backbone_ckpt}")
     print(f"Age head: {age_ckpt}")
-    print(f"Building gallery from {list_path} (max {args.gallery_max}) ...")
+    gallery_mode = "sequential" if args.gallery_fast else "reservoir"
+    _cf = cache_path(
+        root, list_path, args.gallery_max, backbone_ckpt or "", gallery_mode
+    )
+    if not args.no_cache and os.path.isfile(_cf):
+        print(
+            f"Gallery: loading from cache ({_cf}) — {args.gallery_max} max, mode={gallery_mode}"
+        )
+    else:
+        print(
+            f"Gallery: computing embeddings from {list_path} (max {args.gallery_max}, "
+            f"mode={gallery_mode}) ..."
+        )
+        if not args.no_cache:
+            print(f"Gallery: cache will be saved to {_cf}")
 
     def prog(t, desc=""):
         pass
 
-    gallery_paths, gallery_mat = load_or_build_gallery(
+    gallery_paths, gallery_mat, from_cache, cache_file = load_or_build_gallery(
         engine,
         list_path=list_path,
         data_root=data_root,
@@ -362,9 +509,58 @@ def main():
         gallery_fast=args.gallery_fast,
         progress=prog,
     )
-    print(f"Gallery ready: {len(gallery_paths)} images.")
+    if from_cache:
+        print(f"Gallery ready: {len(gallery_paths)} images (loaded from cache).")
+    elif args.no_cache:
+        print(f"Gallery ready: {len(gallery_paths)} images (--no_cache, not saved).")
+    else:
+        print(
+            f"Gallery ready: {len(gallery_paths)} images (computed; saved {cache_file})."
+        )
 
-    demo = make_app(engine, gallery_paths, gallery_mat, args.threshold)
+    fas_engine: FASEngine | None = None
+    if not args.no_fas:
+        fas_dir = args.fas_weights_dir
+        if not os.path.isabs(fas_dir):
+            fas_dir = os.path.join(root, fas_dir)
+        fas_iter = args.fas_iter
+        if fas_iter is None:
+            fas_iter = discover_fas_iteration(fas_dir)
+        if fas_iter is not None:
+            bb_fas = resolve_ckpt(fas_dir, "backbone", fas_iter)
+            gen_fas = resolve_ckpt(fas_dir, "generator", fas_iter)
+            if bb_fas and gen_fas:
+                fas_engine = FASEngine(
+                    backbone_name=args.backbone_name,
+                    image_size=args.image_size,
+                    age_group=args.age_group,
+                    backbone_ckpt=bb_fas,
+                    generator_ckpt=gen_fas,
+                    device=device,
+                )
+                print(
+                    f"FAS: loaded backbone + generator iter {fas_iter} from {fas_dir}"
+                )
+            else:
+                print(
+                    f"FAS: thiếu backbone-{fas_iter} hoặc generator-{fas_iter} trong {fas_dir}",
+                    file=sys.stderr,
+                )
+        else:
+            print(
+                f"FAS: không tìm thấy cặp backbone-*/generator-* trong {fas_dir}",
+                file=sys.stderr,
+            )
+
+    fas_labels = group_labels(args.age_group)
+    demo = make_app(
+        engine,
+        gallery_paths,
+        gallery_mat,
+        args.threshold,
+        fas_engine,
+        fas_labels,
+    )
     demo.queue()
     demo.launch(server_name=args.host, server_port=args.port, share=args.share)
 

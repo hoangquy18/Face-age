@@ -3,3 +3,6 @@ torchvision
 tqdm
 mxnet
 numpy
+gradio>=4.0.0
+# ViT-B/32 fallback when torchvision has no vit_b_32 (need torch>=1.13 / torchvision>=0.13 for native ViT)
+timm>=0.9.0
