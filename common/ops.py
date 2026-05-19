@@ -1,3 +1,4 @@
+import csv
 import torch
 import numpy as np
 from torch import nn
@@ -80,12 +81,18 @@ class LoggerX(object):
         assert dist.is_initialized()
         self.models_save_dir = osp.join(save_root, "save_models")
         self.images_save_dir = osp.join(save_root, "save_images")
+        self.logs_save_dir = osp.join(save_root, "save_logs")
         os.makedirs(self.models_save_dir, exist_ok=True)
         os.makedirs(self.images_save_dir, exist_ok=True)
+        os.makedirs(self.logs_save_dir, exist_ok=True)
         self._modules = []
         self._module_names = []
         self.world_size = dist.get_world_size()
         self.local_rank = dist.get_rank()
+        # tag -> {"file": handle, "writer": csv.DictWriter, "columns": [...]}
+        # Each tag (e.g. "" for train, "VAL" for validation) gets its own file
+        # so plotting tools can load them as independent DataFrames.
+        self._csv_state = {}
 
     @property
     def modules(self):
@@ -122,11 +129,12 @@ class LoggerX(object):
                 )
             )
 
-    def msg(self, stats, step):
-        output_str = "[{}] {:05d}, ".format(
-            time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()), step
-        )
+    def msg(self, stats, step, tag=""):
+        prefix = "{} ".format(tag) if tag else ""
+        timestamp = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+        output_str = "[{}] {}{:05d}, ".format(timestamp, prefix, step)
 
+        row = {}
         for i in range(len(stats)):
             if isinstance(stats, (list, tuple)):
                 var = stats[i]
@@ -137,12 +145,51 @@ class LoggerX(object):
                 raise NotImplementedError
             if isinstance(var, torch.Tensor):
                 var = var.detach().mean()
+                # reduce_tensor is a collective op; all ranks must reach it
+                # consistently. Train calls pass the same tensor list on all
+                # ranks; val calls pass scalars (Python floats) so this branch
+                # is skipped.
                 var = reduce_tensor(var)
                 var = var.item()
+            row[var_name] = var
             output_str += "{} {:2.5f}, ".format(var_name, var)
 
         if self.local_rank == 0:
-            print(output_str)
+            print(output_str, flush=True)
+            self._csv_record(tag, step, timestamp, row)
+
+    def _csv_record(self, tag, step, timestamp, row):
+        """Append a row to <save_logs>/<tag or 'train'>.csv on rank 0.
+
+        Header is written only when the file is empty (first run). On resume
+        the file is opened in append mode so previous rows are preserved.
+        Columns are fixed at the first call per-tag; extra keys introduced
+        later (e.g. enabling --val_test_root mid-run) are dropped to keep
+        the schema stable. Removed keys are written as empty cells.
+        """
+        if self.local_rank != 0:
+            return
+        key = tag if tag else "train"
+        # csv.DictWriter doesn't tolerate '/' or spaces in fieldnames? Actually
+        # it does, but we sanitize the file name only.
+        safe_key = key.lower().replace(" ", "_").replace("/", "_")
+        state = self._csv_state.get(key)
+        if state is None:
+            path = osp.join(self.logs_save_dir, "{}.csv".format(safe_key))
+            need_header = (not osp.exists(path)) or osp.getsize(path) == 0
+            # buffering=1 -> line-buffered: each writerow is flushed to disk
+            # so a crash mid-training still leaves a valid CSV up to the last
+            # completed step.
+            fh = open(path, "a", newline="", buffering=1)
+            columns = ["timestamp", "step"] + list(row.keys())
+            writer = csv.DictWriter(fh, fieldnames=columns, extrasaction="ignore")
+            if need_header:
+                writer.writeheader()
+            state = {"file": fh, "writer": writer, "columns": columns}
+            self._csv_state[key] = state
+        rec = {"timestamp": timestamp, "step": step}
+        rec.update(row)
+        state["writer"].writerow(rec)
 
     def save_image(self, grid_img, n_iter, sample_type):
         save_image(

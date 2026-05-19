@@ -5,7 +5,7 @@ from torch import amp
 
 from common.sampler import RandomSampler
 from common.data_prefetcher import DataPrefetcher
-from common.ops import convert_to_ddp
+from common.ops import convert_to_ddp, reduce_loss
 from . import BasicTask
 from common.dataset import AgingDataset
 
@@ -147,7 +147,8 @@ class FAS(BasicTask):
             fas_id_loss = F.mse_loss(x_id, g_x_id)
 
             ################################age_loss#############################
-            fas_age_loss = F.cross_entropy(age_estimation(g_x_age)[1], target_label)
+            g_age_logits = age_estimation(g_x_age)[1]
+            fas_age_loss = F.cross_entropy(g_age_logits, target_label)
 
             total_loss = (
                 g_loss * opt.fas_gan_loss_weight
@@ -170,6 +171,32 @@ class FAS(BasicTask):
             for p, rg in _frozen:
                 p.requires_grad_(rg)
 
+        # Generation-quality metrics: how well the aged face matches the
+        # target age group (g_age_acc) and how well its identity feature is
+        # preserved relative to the source (id_cos in [-1, 1], 1 = identical).
+        with torch.no_grad():
+            g_age_acc = (
+                g_age_logits.detach().argmax(dim=1) == target_label
+            ).float().mean()
+            x_id_flat = x_id.detach().float().flatten(1)
+            g_x_id_flat = g_x_id.detach().float().flatten(1)
+            id_cos = F.cosine_similarity(x_id_flat, g_x_id_flat, dim=1).mean()
+
+        d_loss, g_loss, fas_id_loss, fas_age_loss, g_age_acc, id_cos = reduce_loss(
+            d_loss, g_loss, fas_id_loss, fas_age_loss, g_age_acc, id_cos
+        )
+
         self.logger.msg(
-            [d1_logit, d3_logit, g_logit, fas_id_loss, fas_age_loss], n_iter
+            [
+                d1_logit,
+                d3_logit,
+                g_logit,
+                d_loss,
+                g_loss,
+                fas_id_loss,
+                fas_age_loss,
+                g_age_acc,
+                id_cos,
+            ],
+            n_iter,
         )

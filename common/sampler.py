@@ -14,6 +14,7 @@ class RandomSampler(Sampler):
         weights=None,
         replacement=True,
         seed=0,
+        indices_pool=None,
     ):
         # PyTorch 2.2+ Sampler no longer uses data_source in the base __init__;
         # passing dataset can raise TypeError (object.__init__ gets extra args).
@@ -32,27 +33,44 @@ class RandomSampler(Sampler):
         self.weights = weights
         self.replacement = replacement
         self.seed = seed
+        # Optional restriction to a subset of dataset indices (e.g. train split
+        # when a hold-out val split is used). When None, samples from the full
+        # dataset range [0, len(dataset)).
+        if indices_pool is not None:
+            self.indices_pool = torch.as_tensor(indices_pool, dtype=torch.long)
+        else:
+            self.indices_pool = None
 
     def __iter__(self):
         # deterministically shuffle
         g = torch.Generator()
         g.manual_seed(self.seed)
         if self.weights is None:
-            n = len(self.dataset)
+            if self.indices_pool is not None:
+                pool = self.indices_pool
+            else:
+                pool = torch.arange(len(self.dataset), dtype=torch.long)
+            n = pool.numel()
             n = n - n % self.batch_size
-            epochs = self.num_samples // n + 1
+            pool = pool[:n] if n > 0 else pool
+            epochs = self.num_samples // max(n, 1) + 1
             indices = []
             for e in range(epochs):
                 g = torch.Generator()
                 g.manual_seed(self.seed + e)
                 # drop last
-                indices.extend(torch.randperm(n, generator=g).tolist()[:n])
+                perm = torch.randperm(n, generator=g)
+                indices.extend(pool[perm].tolist())
             indices = indices[: self.num_samples]
-            # indices = torch.randint(high=n, size=(self.num_samples,), dtype=torch.int64, generator=g).tolist()
         else:
-            indices = torch.multinomial(
+            sampled = torch.multinomial(
                 self.weights, self.num_samples, self.replacement, generator=g
             ).tolist()
+            if self.indices_pool is not None:
+                pool_list = self.indices_pool.tolist()
+                indices = [pool_list[i] for i in sampled]
+            else:
+                indices = sampled
 
         # subsample
         indices = indices[

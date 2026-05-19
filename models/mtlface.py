@@ -121,6 +121,39 @@ class MTLFace(object):
             default=1000,
         )
         parser.add_argument(
+            "--val_split",
+            help=(
+                "fraction of training data held out as in-distribution val set "
+                "(deterministic split by --val_seed). 0 disables holdout val. "
+                "Used to report id_acc / age_group_acc / age_mae on unseen samples."
+            ),
+            type=float,
+            default=0.0,
+        )
+        parser.add_argument(
+            "--val_seed",
+            help="random seed for deterministic train/val split",
+            type=int,
+            default=12345,
+        )
+        parser.add_argument(
+            "--val_batch_size",
+            help="batch size for validation pass (per-GPU). Defaults to --batch_size.",
+            type=int,
+            default=0,
+        )
+        parser.add_argument(
+            "--val_test_root",
+            help=(
+                "Optional folder of InsightFace-style verification benchmarks "
+                "(layout matches arcface-test-set/: <name>.txt pair lists + <name>/ image dirs). "
+                "When set, runs verification (accuracy, TAR@FAR=1e-4) per benchmark "
+                "during validate()."
+            ),
+            type=str,
+            default=None,
+        )
+        parser.add_argument(
             "--save_interval",
             help="save checkpoint every N iterations (0 = only at end)",
             type=int,
